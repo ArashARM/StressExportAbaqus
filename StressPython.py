@@ -1,84 +1,62 @@
-from part import *
-from material import *
-from section import *
-from assembly import *
-from step import *
-from interaction import *
-from load import *
-from mesh import *
-from optimization import *
-from job import *
-from sketch import *
-from visualization import *
-from connectorBehavior import *
-import random
-from array import *
 from odbAccess import openOdb
-import odbAccess
+import os
+import shutil
 import math
-import numpy    
-import os        # Operating system
-import shutil    # copying or moving files
+import numpy as np
 
-#Open text file to write results
-sortie = open('RD.txt' , 'w')
+output_file = 'RD.txt'
+def calculate_element_centroid(instance, connected_nodes):
 
-odbname='Job-1'         # set odb name here
-path='./'                    # set odb path here (if in working dir no need to change!)
-myodbpath=path+odbname+'.odb'    
-odb=openOdb(myodbpath)
+    node_coordinates = np.array([instance.nodes[node_idx - 1].coordinates for node_idx in connected_nodes])
+    centroid = np.mean(node_coordinates, axis=0)  # Compute mean (average) for each coordinate
+    return tuple(centroid)
 
-for instanceName in odb.rootAssembly.instances.keys():
-  print instanceName
+def extract_stress_data(odb, instance_name, step_name='Step-1'):
+  
+    field_output = odb.steps[step_name].frames[-1].fieldOutputs['S']
+    instance = odb.rootAssembly.instances[instance_name]
+    field = field_output.getSubset(region=instance, position=CENTROID)
+    field_values = field.values
 
-topCenter = odb.rootAssembly.instances['PART-1-1']
+    results = []
+    for value in field_values:
+        stress_data = {
+            'element_label': instance.elements[value.elementLabel - 1].label,
+            'stress': value.data,  # Stress tensor components (S11, S22, S33, S12, S13, S23)
+        }
+        connected_nodes = instance.elements[value.elementLabel - 1].connectivity
+        centroid_coords = calculate_element_centroid(instance, connected_nodes)
+        results.append({**stress_data, **dict(zip(['S11', 'S22', 'S33', 'S12', 'S13', 'S23'], stress_data['stress'])), **dict(zip(['Centroid_X', 'Centroid_Y', 'Centroid_Z'], centroid_coords))})
 
-fieldOutput = odb.steps['Step-1'].frames[-1].fieldOutputs['S']
+    return results
 
-field = fieldOutput.getSubset(region=topCenter, position=CENTROID)
-    
-fieldValues = field.values
+def write_results_to_file(results, file_path):
 
-for q in range (0,len(fieldValues)):
-    S11 = fieldValues[q].data[0]
-    S22 = fieldValues[q].data[1]
-    S33 = fieldValues[q].data[2]
-    S12 = fieldValues[q].data[3]
-    S13 = fieldValues[q].data[4]
-    S23 = fieldValues[q].data[5]
-    elementLabel = odb.rootAssembly.instances['PART-1-1'].elements[q].label
-    connectednodes = odb.rootAssembly.instances['PART-1-1'].elements[q].connectivity
-    elementCentroidCoordinatesX = ((odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[0]-1)].coordinates[0] +
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[1]-1)].coordinates[0]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[2]-1)].coordinates[0]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[3]-1)].coordinates[0]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[4]-1)].coordinates[0]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[5]-1)].coordinates[0]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[6]-1)].coordinates[0]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[7]-1)].coordinates[0])/8)
-    
-    elementCentroidCoordinatesY = ((odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[0]-1)].coordinates[1] +
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[1]-1)].coordinates[1]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[2]-1)].coordinates[1]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[3]-1)].coordinates[1]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[4]-1)].coordinates[1]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[5]-1)].coordinates[1]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[6]-1)].coordinates[1]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[7]-1)].coordinates[1])/8)
-    
-    elementCentroidCoordinatesZ = ((odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[0]-1)].coordinates[2] +
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[1]-1)].coordinates[2]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[2]-1)].coordinates[2]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[3]-1)].coordinates[2]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[4]-1)].coordinates[2]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[5]-1)].coordinates[2]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[6]-1)].coordinates[2]+
-    odb.rootAssembly.instances['PART-1-1'].nodes[(connectednodes[7]-1)].coordinates[2])/8)
-    
-    #sortie.write('%d ,%d,%d,%d,%d ,%d ,%d ,%d \n'%(connectednodes[0],connectednodes[1],connectednodes[2],connectednodes[3],connectednodes[4],connectednodes[5],connectednodes[6],connectednodes[7]))
-    sortie.write('%d,%f,%f,%f,%f,%f,%f,%f,%f,%f\n' %(elementLabel,elementCentroidCoordinatesX,elementCentroidCoordinatesY,elementCentroidCoordinatesZ,S11,S22,S33,S12,S13,S23))
+    with open(file_path, 'w') as sortie:
+        for result in results:
+            sortie.write(','.join([str(value) for value in result.values()]) + '\n')
 
+def main():
+    odb_name = 'Job-1'  # ODB name
+    odb_path = './'  # ODB file path
+    my_odb_path = os.path.join(odb_path, odb_name + '.odb')
 
-odb.close()
-     
-sortie.close()
+    # Open ODB file
+    odb = openOdb(my_odb_path)
+
+    # Get instance names from the ODB
+    for instance_name in odb.rootAssembly.instances.keys():
+        print(instance_name)
+
+    # Extract stress data and element centroids
+    instance_name = 'PART-1-1'
+    results = extract_stress_data(odb, instance_name)
+
+    # Write results to the file
+    write_results_to_file(results, output_file)
+
+    # Close ODB file
+    odb.close()
+
+if __name__ == "__main__":
+    main()
